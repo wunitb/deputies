@@ -244,11 +244,79 @@ export class WorkerService {
 
   private async runWithHeartbeat(claimed: ClaimedMessageBatch): Promise<RunnerResult | null> {
     const abort = new AbortController();
+    const initialLeaseExpiresAt = claimed.run.leaseExpiresAt;
+    if (
+      claimed.run.status !== 'running' ||
+      claimed.run.leaseOwner !== this.options.leaseOwner ||
+      !initialLeaseExpiresAt ||
+      initialLeaseExpiresAt <= new Date()
+    ) {
+      throw new Error('Deputies lifecycle authority was not proven before runner execution');
+    }
+
     const runSequences = claimed.messages.map((message) => message.sequence);
+    const authoritySafetyMarginMs = Math.max(1, Math.min(5_000, Math.floor(this.leaseDurationMs / 2)));
+    let lastProvenLeaseExpiresAt = initialLeaseExpiresAt;
+    let authorityError: Error | undefined;
+    let authorityDeadline: ReturnType<typeof setTimeout> | undefined;
+    let heartbeatPoll: Promise<void> | undefined;
+    let cancellationPoll: Promise<void> | undefined;
+    let pollingStopped = false;
     let steeringHandler: ((message: import('../runner/types.js').RunnerMessageInput) => Promise<void>) | undefined;
     let steeringPoll: Promise<void> | undefined;
     let steeringError: unknown;
     let steeringStopped = false;
+
+    const abortForAuthority = (error: Error) => {
+      authorityError ??= error;
+      abort.abort(authorityError);
+    };
+    const armAuthorityDeadline = (leaseExpiresAt: Date) => {
+      lastProvenLeaseExpiresAt = leaseExpiresAt;
+      if (authorityDeadline) clearTimeout(authorityDeadline);
+      const abortAt = leaseExpiresAt.getTime() - authoritySafetyMarginMs;
+      const expireAuthority = () =>
+        abortForAuthority(
+          authorityError ??
+            new Error(
+              `Deputies lifecycle authority was not renewed before the last proven lease expiry ${lastProvenLeaseExpiresAt.toISOString()}`,
+            ),
+        );
+      if (abortAt <= Date.now()) {
+        expireAuthority();
+        return;
+      }
+      authorityDeadline = setTimeout(expireAuthority, abortAt - Date.now());
+    };
+    const observeAuthority = (run: RunRecord | null, operation: string) => {
+      if (abort.signal.aborted) return;
+      if (run?.status === 'cancelling' || run?.status === 'cancelled') {
+        abort.abort();
+        return;
+      }
+      if (
+        !run ||
+        run.status !== 'running' ||
+        run.leaseOwner !== this.options.leaseOwner ||
+        !run.leaseExpiresAt ||
+        run.leaseExpiresAt <= new Date() ||
+        run.leaseExpiresAt < lastProvenLeaseExpiresAt
+      ) {
+        abortForAuthority(new Error(`Deputies lifecycle authority was lost during ${operation}`));
+        return;
+      }
+      authorityError = undefined;
+      armAuthorityDeadline(run.leaseExpiresAt);
+    };
+    const recordAuthorityFailure = (operation: string, error: unknown) => {
+      if (abort.signal.aborted) return;
+      authorityError = new Error(
+        `Deputies lifecycle authority became unprovable during ${operation}: ${describeLifecycleError(error)}`,
+        { cause: error },
+      );
+    };
+    armAuthorityDeadline(initialLeaseExpiresAt);
+
     const pollSteering = () => {
       if (steeringStopped || abort.signal.aborted || !steeringHandler || steeringPoll) return;
       steeringPoll = (async () => {
@@ -297,32 +365,33 @@ export class WorkerService {
         });
     };
     const pollCancellation = () => {
-      this.options.store
+      if (pollingStopped || abort.signal.aborted || cancellationPoll) return;
+      cancellationPoll = this.options.store
         .getRun(claimed.run.id)
-        .then((run) => {
-          if (!run || run.status === 'cancelling') abort.abort();
-        })
-        .catch((error: unknown) => {
-          console.error(error instanceof Error ? error.message : error);
+        .then((run) => observeAuthority(run, 'cancellation polling'))
+        .catch((error: unknown) => recordAuthorityFailure('cancellation polling', error))
+        .then(() => {
+          cancellationPoll = undefined;
         });
     };
-    const heartbeat = setInterval(() => {
+    const renewLease = () => {
+      if (pollingStopped || abort.signal.aborted || heartbeatPoll) return;
       const heartbeatAt = new Date();
-      this.options.store
+      heartbeatPoll = this.options.store
         .renewRunLease({
           runId: claimed.run.id,
           leaseOwner: this.options.leaseOwner,
           leaseExpiresAt: new Date(heartbeatAt.getTime() + this.leaseDurationMs),
           heartbeatAt,
         })
-        .then((run) => {
-          if (!run || run.status === 'cancelling') abort.abort();
-        })
-        .catch((error: unknown) => {
-          console.error(error instanceof Error ? error.message : error);
+        .then((run) => observeAuthority(run, 'run lease renewal'))
+        .catch((error: unknown) => recordAuthorityFailure('run lease renewal', error))
+        .then(() => {
+          heartbeatPoll = undefined;
         });
-    }, this.heartbeatIntervalMs);
-    const cancellationPoll = setInterval(pollCancellation, this.cancellationPollIntervalMs);
+    };
+    const heartbeat = setInterval(renewLease, this.heartbeatIntervalMs);
+    const cancellationInterval = setInterval(pollCancellation, this.cancellationPollIntervalMs);
     const steeringInterval = setInterval(pollSteering, 500);
     pollCancellation();
 
@@ -341,13 +410,23 @@ export class WorkerService {
     } catch (error: unknown) {
       runError = error;
     } finally {
+      pollingStopped = true;
       steeringStopped = true;
       clearInterval(heartbeat);
-      clearInterval(cancellationPoll);
+      clearInterval(cancellationInterval);
       clearInterval(steeringInterval);
-      await steeringPoll;
+      const pollingSettled = Promise.all([steeringPoll, heartbeatPoll, cancellationPoll]);
+      const authorityAborted = new Promise<void>((resolve) => {
+        if (abort.signal.aborted) {
+          resolve();
+          return;
+        }
+        abort.signal.addEventListener('abort', () => resolve(), { once: true });
+      });
+      await Promise.race([pollingSettled, authorityAborted]);
+      if (authorityDeadline) clearTimeout(authorityDeadline);
     }
-    const error = steeringError ?? runError;
+    const error = authorityError ?? steeringError ?? runError;
     if (error !== undefined) {
       throw error instanceof Error
         ? error
@@ -410,6 +489,7 @@ export class WorkerService {
             sessionId: primary.sessionId,
             runId: claimed.run.id,
             leaseOwner: this.options.leaseOwner,
+            attempt: claimed.run.attempt,
             messageId: primary.id,
             ...(session.createdByUserId ? { createdByUserId: session.createdByUserId } : {}),
             prompt: buildBatchPrompt(claimed.messages),
@@ -829,6 +909,11 @@ function deputyNotificationPrompt(session: SessionRecord, outcome: DeputyNotific
     ].join('\n');
   }
   return `Child session ${title} was cancelled before completion.`;
+}
+
+function describeLifecycleError(error: unknown): string {
+  const message = error instanceof Error ? error.message : typeof error === 'string' ? error : 'lease store failure';
+  return message.replace(/\s+/gu, ' ').slice(0, 512);
 }
 
 function truncate(value: string, maxLength: number): string {

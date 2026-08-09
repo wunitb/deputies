@@ -36,6 +36,7 @@ describe('AgentFieldRunner', () => {
       sessionId: 'session-1',
       runId: 'run-1',
       leaseOwner: 'worker-1',
+      attempt: 1,
       messageId: 'message-1',
       prompt: 'hello',
       context: { correlation: 'value' },
@@ -61,7 +62,7 @@ describe('AgentFieldRunner', () => {
         session_id: 'session-1',
         message_id: 'message-1',
       },
-      authority: { home_id: 'home-1', run_id: 'run-1', lease_owner: 'worker-1' },
+      authority: { home_id: 'home-1', run_id: 'run-1', lease_owner: 'worker-1', attempt: 1 },
     });
     expect(
       vi
@@ -74,6 +75,49 @@ describe('AgentFieldRunner', () => {
       'https://agentfield.test/api/v1/executions/execution-1',
       'https://agentfield.test/api/v1/executions/execution-1',
     ]);
+  });
+
+  it('reconciles an ambiguously committed async submission with the identical authority tuple', async () => {
+    const ambiguousTimeout = new Error('request timed out');
+    ambiguousTimeout.name = 'TimeoutError';
+    const fetchImpl = vi
+      .fn()
+      .mockRejectedValueOnce(ambiguousTimeout)
+      .mockResolvedValueOnce(jsonResponse({ execution_id: 'execution-1', run_id: 'run-1', status: 'queued' }))
+      .mockResolvedValueOnce(
+        jsonResponse({ execution_id: 'execution-1', run_id: 'run-1', status: 'succeeded', result: 'reconciled' }),
+      ) as unknown as typeof fetch;
+    const sandbox = await new FakeSandboxProvider().create({ sessionId: 'session-1' });
+
+    await expect(
+      new AgentFieldRunner(config, fetchImpl).run({
+        sessionId: 'session-1',
+        runId: 'run-1',
+        leaseOwner: 'worker-1',
+        attempt: 2,
+        messageId: 'message-1',
+        prompt: 'hello',
+        context: {},
+        sandbox,
+        emit: async () => {},
+      }),
+    ).resolves.toEqual({ text: 'reconciled', artifacts: [] });
+
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    const [firstUrl, firstInit] = vi.mocked(fetchImpl).mock.calls[0]!;
+    const [secondUrl, secondInit] = vi.mocked(fetchImpl).mock.calls[1]!;
+    expect(secondUrl.toString()).toBe(firstUrl.toString());
+    expect(secondInit?.headers).toEqual(firstInit?.headers);
+    expect(secondInit?.body).toBe(firstInit?.body);
+    expect(JSON.parse(String(secondInit?.body)).authority).toEqual({
+      home_id: 'home-1',
+      run_id: 'run-1',
+      lease_owner: 'worker-1',
+      attempt: 2,
+    });
+    expect(vi.mocked(fetchImpl).mock.calls[2]![0].toString()).toBe(
+      'https://agentfield.test/api/v1/executions/execution-1',
+    );
   });
 
   it('rejects an AgentField execution bound to another Deputies run', async () => {
@@ -89,6 +133,7 @@ describe('AgentFieldRunner', () => {
         sessionId: 'session-1',
         runId: 'run-1',
         leaseOwner: 'worker-1',
+        attempt: 1,
         messageId: 'message-1',
         prompt: 'hello',
         context: {},
@@ -108,24 +153,36 @@ describe('AgentFieldRunner', () => {
           execution_id: 'execution-1',
           run_id: 'run-1',
           status: 'failed',
-          error: 'permission denied',
-          error_details: { code: 'permission_denied' },
+          status_reason: `queue refused ${'r'.repeat(2_000)}`,
+          error: `permission denied ${'e'.repeat(2_000)}`,
+          error_details: { detail: `policy ${'d'.repeat(2_000)}` },
         }),
       ) as unknown as typeof fetch;
     const sandbox = await new FakeSandboxProvider().create({ sessionId: 'session-1' });
 
-    await expect(
-      new AgentFieldRunner(config, fetchImpl).run({
+    const failure = await new AgentFieldRunner(config, fetchImpl)
+      .run({
         sessionId: 'session-1',
         runId: 'run-1',
         leaseOwner: 'worker-1',
+        attempt: 1,
         messageId: 'message-1',
         prompt: 'hello',
         context: {},
         sandbox,
         emit: async () => {},
-      }),
-    ).rejects.toThrow('failed: permission denied; {"code":"permission_denied"}');
+      })
+      .catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(Error);
+    const message = (failure as Error).message;
+    expect(message).toMatch(
+      /^AgentField execution reached terminal status failed: status_reason=present:sha256:[0-9a-f]{64}; error=present:sha256:[0-9a-f]{64}; error_details=present:sha256:[0-9a-f]{64}$/u,
+    );
+    expect(message).not.toContain('queue refused');
+    expect(message).not.toContain('permission denied');
+    expect(message).not.toContain('policy');
+    expect(message.length).toBeLessThan(300);
   });
 
   it('fails before AgentField I/O when the current Deputies lease owner is absent', async () => {
