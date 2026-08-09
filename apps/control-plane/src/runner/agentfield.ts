@@ -14,7 +14,7 @@ const executionStatusSchema = z
   .object({
     execution_id: z.string().min(1),
     run_id: z.string().min(1),
-    status: z.enum(['queued', 'running', 'completed', 'failed', 'cancelled', 'timeout']),
+    status: z.enum(['queued', 'running', 'succeeded', 'failed', 'cancelled', 'timeout']),
     result: z.unknown().optional(),
   })
   .passthrough();
@@ -43,6 +43,7 @@ export class AgentFieldRunner implements Runner {
         `/api/v1/execute/async/${encodeURIComponent(this.config.target)}`,
         {
           method: 'POST',
+          headers: { 'x-run-id': input.runId },
           body: JSON.stringify({
             input: {
               prompt: input.prompt,
@@ -70,7 +71,7 @@ export class AgentFieldRunner implements Runner {
       if (execution.execution_id !== submission.execution_id || execution.run_id !== input.runId) {
         throw new Error('AgentField returned a mismatched execution identity');
       }
-      if (execution.status === 'completed') {
+      if (execution.status === 'succeeded') {
         return { text: stringifyResult(execution.result), artifacts: [] };
       }
       if (execution.status === 'failed' || execution.status === 'cancelled' || execution.status === 'timeout') {
@@ -82,12 +83,17 @@ export class AgentFieldRunner implements Runner {
     throw new Error('AgentField execution remained in flight after the configured timeout');
   }
 
-  private async requestJson(path: string, init: RequestInit, signal: AbortSignal): Promise<unknown> {
+  private async requestJson(
+    path: string,
+    init: Omit<RequestInit, 'headers'> & { headers?: Record<string, string> },
+    signal: AbortSignal,
+  ): Promise<unknown> {
     const response = await this.fetchImpl(new URL(path, this.config.baseUrl), {
       ...init,
       headers: {
         authorization: `Bearer ${this.config.bearerToken}`,
         'content-type': 'application/json',
+        ...init.headers,
       },
       signal: AbortSignal.any([signal, AbortSignal.timeout(this.config.requestTimeoutMs)]),
     });

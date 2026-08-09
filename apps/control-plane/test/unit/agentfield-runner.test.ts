@@ -17,7 +17,7 @@ describe('AgentFieldRunner', () => {
       .fn()
       .mockResolvedValueOnce(jsonResponse({ execution_id: 'execution-1', run_id: 'run-1', status: 'queued' }))
       .mockResolvedValueOnce(
-        jsonResponse({ execution_id: 'execution-1', run_id: 'run-1', status: 'completed', result: { ok: true } }),
+        jsonResponse({ execution_id: 'execution-1', run_id: 'run-1', status: 'succeeded', result: { ok: true } }),
       ) as unknown as typeof fetch;
     const sandbox = await new FakeSandboxProvider().create({ sessionId: 'session-1' });
 
@@ -39,6 +39,7 @@ describe('AgentFieldRunner', () => {
     expect(submitInit?.headers).toEqual({
       authorization: `Bearer ${config.bearerToken}`,
       'content-type': 'application/json',
+      'x-run-id': 'run-1',
     });
     expect(JSON.parse(String(submitInit?.body))).toEqual({
       input: {
