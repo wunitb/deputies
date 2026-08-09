@@ -184,7 +184,7 @@ function formatTerminalFailure(execution: AgentFieldExecution): string {
 
 function digestDiagnostic(value: unknown): string {
   const serialized = typeof value === 'string' ? value : (JSON.stringify(canonicalizeDiagnostic(value)) ?? 'undefined');
-  return createHash('sha256').update(serialized).digest('hex');
+  return createHash('sha256').update(serialized).digest('base64url');
 }
 
 function canonicalizeDiagnostic(value: unknown): unknown {

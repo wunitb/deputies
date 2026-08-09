@@ -1415,9 +1415,9 @@ describe('WorkerService', () => {
     await services.messages.enqueue({ sessionId: session.id, prompt: 'fail in capability execution' });
     const diagnostics = [
       'AgentField execution reached terminal status failed:',
-      `status_reason=present:sha256:${'a'.repeat(64)};`,
-      `error=present:sha256:${'b'.repeat(64)};`,
-      `error_details=present:sha256:${'c'.repeat(64)}`,
+      `status_reason=present:sha256:${'a'.repeat(43)};`,
+      `error=present:sha256:${'b'.repeat(43)};`,
+      `error_details=present:sha256:${'c'.repeat(43)}`,
     ].join(' ');
     const worker = new WorkerService({
       store,

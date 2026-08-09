@@ -177,7 +177,7 @@ describe('AgentFieldRunner', () => {
     expect(failure).toBeInstanceOf(Error);
     const message = (failure as Error).message;
     expect(message).toMatch(
-      /^AgentField execution reached terminal status failed: status_reason=present:sha256:[0-9a-f]{64}; error=present:sha256:[0-9a-f]{64}; error_details=present:sha256:[0-9a-f]{64}$/u,
+      /^AgentField execution reached terminal status failed: status_reason=present:sha256:[A-Za-z0-9_-]{43}; error=present:sha256:[A-Za-z0-9_-]{43}; error_details=present:sha256:[A-Za-z0-9_-]{43}$/u,
     );
     expect(message).not.toContain('queue refused');
     expect(message).not.toContain('permission denied');
