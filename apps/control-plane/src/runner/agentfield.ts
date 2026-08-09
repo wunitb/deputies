@@ -1,23 +1,62 @@
 import { setTimeout as delay } from 'node:timers/promises';
-import { z } from 'zod';
 import type { Runner, RunnerInput, RunnerResult } from './types.js';
 
-const submissionSchema = z
-  .object({
-    execution_id: z.string().min(1),
-    run_id: z.string().min(1),
-    status: z.string().min(1),
-  })
-  .strict();
+type AgentFieldSubmission = { execution_id: string; run_id: string; status: string };
+type AgentFieldExecution = AgentFieldSubmission & {
+  status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'timeout';
+  result?: unknown;
+};
 
-const executionStatusSchema = z
-  .object({
-    execution_id: z.string().min(1),
-    run_id: z.string().min(1),
-    status: z.enum(['queued', 'running', 'succeeded', 'failed', 'cancelled', 'timeout']),
-    result: z.unknown().optional(),
-  })
-  .passthrough();
+const executionStatuses: Record<AgentFieldExecution['status'], true> = {
+  queued: true,
+  running: true,
+  succeeded: true,
+  failed: true,
+  cancelled: true,
+  timeout: true,
+};
+
+function parseSubmission(value: unknown): AgentFieldSubmission {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('AgentField submission response was invalid');
+  }
+  const response = value as Record<string, unknown>;
+  if (
+    Object.keys(response).length !== 3 ||
+    typeof response.execution_id !== 'string' ||
+    response.execution_id.length === 0 ||
+    typeof response.run_id !== 'string' ||
+    response.run_id.length === 0 ||
+    typeof response.status !== 'string' ||
+    response.status.length === 0
+  ) {
+    throw new Error('AgentField submission response was invalid');
+  }
+  return { execution_id: response.execution_id, run_id: response.run_id, status: response.status };
+}
+
+function parseExecution(value: unknown): AgentFieldExecution {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('AgentField execution response was invalid');
+  }
+  const response = value as Record<string, unknown>;
+  if (
+    typeof response.execution_id !== 'string' ||
+    response.execution_id.length === 0 ||
+    typeof response.run_id !== 'string' ||
+    response.run_id.length === 0 ||
+    typeof response.status !== 'string' ||
+    !(response.status in executionStatuses)
+  ) {
+    throw new Error('AgentField execution response was invalid');
+  }
+  return {
+    execution_id: response.execution_id,
+    run_id: response.run_id,
+    status: response.status as AgentFieldExecution['status'],
+    ...('result' in response ? { result: response.result } : {}),
+  };
+}
 
 export type AgentFieldRunnerConfig = {
   baseUrl: string;
@@ -38,7 +77,7 @@ export class AgentFieldRunner implements Runner {
   async run(input: RunnerInput): Promise<RunnerResult> {
     if (!input.leaseOwner) throw new Error('AgentField execution requires the current Deputies lease owner');
     const signal = input.signal ?? new AbortController().signal;
-    const submission = submissionSchema.parse(
+    const submission = parseSubmission(
       await this.requestJson(
         `/api/v1/execute/async/${encodeURIComponent(this.config.target)}`,
         {
@@ -66,7 +105,7 @@ export class AgentFieldRunner implements Runner {
 
     const deadline = Date.now() + this.config.executionTimeoutMs;
     while (Date.now() < deadline) {
-      const execution = executionStatusSchema.parse(
+      const execution = parseExecution(
         await this.requestJson(`/api/v1/executions/${encodeURIComponent(submission.execution_id)}`, {}, signal),
       );
       if (execution.execution_id !== submission.execution_id || execution.run_id !== input.runId) {
