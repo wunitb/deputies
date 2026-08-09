@@ -52,6 +52,7 @@ describe('AgentFieldRunner', () => {
     expect(JSON.parse(String(submitInit?.body))).toEqual({
       input: {
         name: 'hello',
+        message: 'hello',
         prompt: 'hello',
         context: { correlation: 'value' },
         session_id: 'session-1',

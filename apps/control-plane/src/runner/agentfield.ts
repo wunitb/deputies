@@ -85,6 +85,7 @@ export class AgentFieldRunner implements Runner {
           body: JSON.stringify({
             input: {
               name: input.prompt,
+              message: input.prompt,
               prompt: input.prompt,
               context: input.context,
               session_id: input.sessionId,
