@@ -6,7 +6,7 @@ import { AMAZON_BEDROCK_INFERENCE_PROFILE_MODEL_IDS, AMAZON_BEDROCK_PROVIDER } f
 import { REASONING_LEVELS, type ReasoningLevel } from '../runner/reasoning.js';
 
 export type RunMode = 'combined' | 'all' | 'api' | 'worker';
-export type RunnerKind = 'fake' | 'pi';
+export type RunnerKind = 'fake' | 'pi' | 'agentfield';
 export type SandboxProviderKind =
   | 'fake'
   | 'unsafe-local'
@@ -120,6 +120,13 @@ export type AppConfig = {
   runnerModelDefault?: string;
   runnerModelChoices: string[];
   runnerReasoningLevelDefault?: ReasoningLevel;
+  agentFieldBaseUrl?: string;
+  agentFieldBearerToken?: string;
+  agentFieldTarget?: string;
+  agentFieldAllowInsecureHttp: boolean;
+  agentFieldRequestTimeoutMs: number;
+  agentFieldExecutionTimeoutMs: number;
+  agentFieldPollIntervalMs: number;
   titleGenerationEnabled: boolean;
   titleGenerationModel?: string;
   openaiCodexAuth: OpenAICodexAuthConfig;
@@ -257,7 +264,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
         'REPOSITORY_SETUP_SCRIPT_TIMEOUT_SECONDS',
       ) * 1000,
     runMode,
-    runner: parseEnum(env.RUNNER, ['fake', 'pi'], 'fake'),
+    runner: parseEnum(env.RUNNER, ['fake', 'pi', 'agentfield'], 'fake'),
     sandboxProvider: parseEnum(
       env.SANDBOX_PROVIDER,
       ['fake', 'unsafe-local', 'docker', 'daytona', 'tensorlake', 'superserve', 'lambda-microvm', 'k8s-agent-sandbox'],
@@ -295,6 +302,26 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
     runnerStateStore: parseEnum(env.RUNNER_STATE_STORE, ['postgres', 'memory'], 'postgres'),
     openaiCodexAuth: parseOpenAICodexAuthConfig(env, appDataStore, databaseUrl),
     runnerModelChoices: parseStringList(env.RUNNER_MODEL_CHOICES),
+    agentFieldAllowInsecureHttp: parseBoolean(
+      env.AGENTFIELD_RUNNER_ALLOW_INSECURE_HTTP,
+      false,
+      'AGENTFIELD_RUNNER_ALLOW_INSECURE_HTTP',
+    ),
+    agentFieldRequestTimeoutMs: parsePositiveInteger(
+      env.AGENTFIELD_RUNNER_REQUEST_TIMEOUT_MS,
+      10_000,
+      'AGENTFIELD_RUNNER_REQUEST_TIMEOUT_MS',
+    ),
+    agentFieldExecutionTimeoutMs: parsePositiveInteger(
+      env.AGENTFIELD_RUNNER_EXECUTION_TIMEOUT_MS,
+      300_000,
+      'AGENTFIELD_RUNNER_EXECUTION_TIMEOUT_MS',
+    ),
+    agentFieldPollIntervalMs: parsePositiveInteger(
+      env.AGENTFIELD_RUNNER_POLL_INTERVAL_MS,
+      1_000,
+      'AGENTFIELD_RUNNER_POLL_INTERVAL_MS',
+    ),
     titleGenerationEnabled: parseBoolean(env.TITLE_GENERATION_ENABLED, true, 'TITLE_GENERATION_ENABLED'),
     webSearchProvider: parseEnum(env.WEB_SEARCH_PROVIDER, ['disabled', 'auto', 'brave', 'duckduckgo'], 'auto'),
     webSearchMaxResults: Math.min(parsePositiveInteger(env.WEB_SEARCH_MAX_RESULTS, 10, 'WEB_SEARCH_MAX_RESULTS'), 20),
@@ -393,6 +420,9 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
   if (env.GITHUB_OAUTH_CALLBACK_URL) config.githubOAuthCallbackUrl = env.GITHUB_OAUTH_CALLBACK_URL;
   if (databaseUrl) config.databaseUrl = databaseUrl;
   if (env.RUNNER_MODEL_DEFAULT) config.runnerModelDefault = env.RUNNER_MODEL_DEFAULT;
+  if (env.AGENTFIELD_RUNNER_BASE_URL) config.agentFieldBaseUrl = env.AGENTFIELD_RUNNER_BASE_URL;
+  if (env.AGENTFIELD_RUNNER_BEARER_TOKEN) config.agentFieldBearerToken = env.AGENTFIELD_RUNNER_BEARER_TOKEN;
+  if (env.AGENTFIELD_RUNNER_TARGET) config.agentFieldTarget = env.AGENTFIELD_RUNNER_TARGET;
   if (env.RUNNER_REASONING_LEVEL_DEFAULT) {
     config.runnerReasoningLevelDefault = parseEnum(
       env.RUNNER_REASONING_LEVEL_DEFAULT,
@@ -493,6 +523,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
   validateAgentSandboxOrchestratorConfig(config);
   validateLambdaMicrovmConfig(config);
   validateRunAuthorityConfig(config);
+  validateAgentFieldRunnerConfig(config);
 
   return config;
 }
@@ -523,6 +554,53 @@ function validateRunAuthorityConfig(config: AppConfig): void {
     throw new Error(
       'RUN_AUTHORITY_BEARER_TOKEN must be a header-safe, non-placeholder secret of at least 32 characters',
     );
+  }
+}
+
+function validateAgentFieldRunnerConfig(config: AppConfig): void {
+  if (config.runner !== 'agentfield') return;
+  if (!config.runAuthorityHomeId || !config.runAuthorityBearerToken) {
+    throw new Error('RUN_AUTHORITY_HOME_ID and RUN_AUTHORITY_BEARER_TOKEN are required when RUNNER=agentfield');
+  }
+  if (!config.agentFieldBaseUrl) {
+    throw new Error('AGENTFIELD_RUNNER_BASE_URL is required when RUNNER=agentfield');
+  }
+  const baseUrl = new URL(config.agentFieldBaseUrl);
+  if (
+    baseUrl.username ||
+    baseUrl.password ||
+    baseUrl.pathname !== '/' ||
+    baseUrl.search ||
+    baseUrl.hash ||
+    (baseUrl.protocol !== 'https:' && !(baseUrl.protocol === 'http:' && config.agentFieldAllowInsecureHttp))
+  ) {
+    throw new Error('AGENTFIELD_RUNNER_BASE_URL must be an origin-only HTTPS URL (or explicit lab HTTP)');
+  }
+  const token = config.agentFieldBearerToken;
+  if (
+    !token ||
+    token.length < 32 ||
+    !/^[A-Za-z0-9._~+/-]+=*$/.test(token) ||
+    /(?:change[-_]?me|replace[-_]?me|example|placeholder)/i.test(token)
+  ) {
+    throw new Error(
+      'AGENTFIELD_RUNNER_BEARER_TOKEN must be a header-safe, non-placeholder secret of at least 32 characters',
+    );
+  }
+  if (!config.agentFieldTarget || !/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/.test(config.agentFieldTarget)) {
+    throw new Error('AGENTFIELD_RUNNER_TARGET must be one exact capability target');
+  }
+  if (config.agentFieldTarget.includes('*')) {
+    throw new Error('AGENTFIELD_RUNNER_TARGET must not contain a wildcard');
+  }
+  if (config.agentFieldRequestTimeoutMs > 300_000) {
+    throw new Error('AGENTFIELD_RUNNER_REQUEST_TIMEOUT_MS must not exceed 300000');
+  }
+  if (config.agentFieldExecutionTimeoutMs > 86_400_000) {
+    throw new Error('AGENTFIELD_RUNNER_EXECUTION_TIMEOUT_MS must not exceed 86400000');
+  }
+  if (config.agentFieldPollIntervalMs > 60_000) {
+    throw new Error('AGENTFIELD_RUNNER_POLL_INTERVAL_MS must not exceed 60000');
   }
 }
 
@@ -790,6 +868,28 @@ export function requireAgentSandboxOrchestratorToken(config: AppConfig): string 
   }
 
   return config.agentSandboxOrchestratorToken;
+}
+
+export function requireAgentFieldRunnerConfig(config: AppConfig): {
+  baseUrl: string;
+  bearerToken: string;
+  target: string;
+  homeId: string;
+  requestTimeoutMs: number;
+  executionTimeoutMs: number;
+  pollIntervalMs: number;
+} {
+  validateAgentFieldRunnerConfig(config);
+  if (config.runner !== 'agentfield') throw new Error('RUNNER must be agentfield');
+  return {
+    baseUrl: config.agentFieldBaseUrl!,
+    bearerToken: config.agentFieldBearerToken!,
+    target: config.agentFieldTarget!,
+    homeId: config.runAuthorityHomeId!,
+    requestTimeoutMs: config.agentFieldRequestTimeoutMs,
+    executionTimeoutMs: config.agentFieldExecutionTimeoutMs,
+    pollIntervalMs: config.agentFieldPollIntervalMs,
+  };
 }
 
 export function requireRunnerModelDefault(config: AppConfig): string {

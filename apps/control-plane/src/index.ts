@@ -13,6 +13,7 @@ import {
   requireDockerOrchestratorUrl,
   requireGitHubAppCredentials,
   requireLambdaMicrovmImageIdentifier,
+  requireAgentFieldRunnerConfig,
   requireRunnerModelDefault,
   requireSuperserveApiKey,
   requireSuperserveTemplate,
@@ -29,6 +30,7 @@ import { GitHubRepositoryAccessService } from './integrations/github/repository-
 import { SlackClient } from './integrations/slack/client.js';
 import { SlackCompletionCallbackSender } from './integrations/slack/callback-sender.js';
 import { SlackRunProgressNotifier } from './integrations/slack/progress-notifier.js';
+import { AgentFieldRunner } from './runner/agentfield.js';
 import { FakeRunner } from './runner/fake.js';
 import type { Runner } from './runner/types.js';
 import { PiRunner, type PiRunnerOptions } from './runner-pi/runner.js';
@@ -417,6 +419,9 @@ function postgresStoreOptions(): { sandboxSecretEncryptionKey?: string } {
 async function createRunner(): Promise<Runner> {
   if (config.runner === 'fake') {
     return new FakeRunner(config.fakeRunnerArtifact ? { artifact: config.fakeRunnerArtifact } : {});
+  }
+  if (config.runner === 'agentfield') {
+    return new AgentFieldRunner(requireAgentFieldRunnerConfig(config));
   }
 
   const model = requireRunnerModelDefault(config);

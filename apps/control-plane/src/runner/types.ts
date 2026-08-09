@@ -5,6 +5,7 @@ import type { ReasoningLevel } from './reasoning.js';
 export type RunnerInput = {
   sessionId: string;
   runId: string;
+  leaseOwner?: string;
   messageId: string;
   createdByUserId?: string;
   prompt: string;

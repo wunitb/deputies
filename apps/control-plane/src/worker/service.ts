@@ -409,6 +409,7 @@ export class WorkerService {
           this.options.runner.run({
             sessionId: primary.sessionId,
             runId: claimed.run.id,
+            leaseOwner: this.options.leaseOwner,
             messageId: primary.id,
             ...(session.createdByUserId ? { createdByUserId: session.createdByUserId } : {}),
             prompt: buildBatchPrompt(claimed.messages),

@@ -174,6 +174,10 @@ describe('loadConfig', () => {
       unsafeAuthGithubAllowAll: false,
       runnerStateStore: 'postgres',
       runnerModelChoices: [],
+      agentFieldAllowInsecureHttp: false,
+      agentFieldRequestTimeoutMs: 10_000,
+      agentFieldExecutionTimeoutMs: 300_000,
+      agentFieldPollIntervalMs: 1_000,
       titleGenerationEnabled: true,
       openaiCodexAuth: { mode: 'default' },
       webSearchProvider: 'auto',
@@ -524,6 +528,38 @@ describe('loadConfig', () => {
       artifactCreateMaxBytes: 1024,
       unsafeAllowLocalHttpCallbacks: true,
     });
+  });
+
+  it('requires an exact authenticated AgentField runner boundary', () => {
+    const env = {
+      RUN_MODE: 'worker',
+      RUNNER: 'agentfield',
+      RUN_AUTHORITY_HOME_ID: 'home-1',
+      RUN_AUTHORITY_BEARER_TOKEN: 'a'.repeat(32),
+      AGENTFIELD_RUNNER_BASE_URL: 'https://agentfield.example',
+      AGENTFIELD_RUNNER_BEARER_TOKEN: 'b'.repeat(32),
+      AGENTFIELD_RUNNER_TARGET: 'demo_echo',
+    };
+
+    expect(loadConfig(env)).toMatchObject({
+      runner: 'agentfield',
+      runAuthorityHomeId: 'home-1',
+      agentFieldBaseUrl: 'https://agentfield.example',
+      agentFieldTarget: 'demo_echo',
+    });
+    expect(() => loadConfig({ ...env, AGENTFIELD_RUNNER_TARGET: '' })).toThrow(
+      'AGENTFIELD_RUNNER_TARGET must be one exact capability target',
+    );
+    expect(() => loadConfig({ ...env, AGENTFIELD_RUNNER_BASE_URL: 'http://agentfield.example' })).toThrow(
+      'origin-only HTTPS URL',
+    );
+    expect(() =>
+      loadConfig({
+        ...env,
+        AGENTFIELD_RUNNER_BASE_URL: 'http://agentfield.example',
+        AGENTFIELD_RUNNER_ALLOW_INSECURE_HTTP: 'true',
+      }),
+    ).not.toThrow();
   });
 
   it('rejects invalid repository setup script config', () => {
