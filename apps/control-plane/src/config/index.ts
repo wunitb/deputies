@@ -92,6 +92,9 @@ export type AppConfig = {
   appDataStore: AppStoreKind;
   apiAuthMode: ApiAuthMode;
   apiBearerToken?: string;
+  runAuthorityHomeId?: string;
+  runAuthorityBearerToken?: string;
+  runAuthorityHeartbeatMaxAgeMs: number;
   authProvider: AuthProviderKind;
   authStaticUsername?: string;
   authStaticPassword?: string;
@@ -272,6 +275,11 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
     apiAuthMode: runModeStartsApi(runMode)
       ? parseRequiredEnum(env.API_AUTH_MODE, ['none', 'bearer', 'session'], 'API_AUTH_MODE')
       : parseEnum(env.API_AUTH_MODE, ['none', 'bearer', 'session'], 'none'),
+    runAuthorityHeartbeatMaxAgeMs: parsePositiveInteger(
+      env.RUN_AUTHORITY_HEARTBEAT_MAX_AGE_MS,
+      30_000,
+      'RUN_AUTHORITY_HEARTBEAT_MAX_AGE_MS',
+    ),
     authProvider: parseEnum(env.AUTH_PROVIDER, ['static', 'github'], 'static'),
     authCookieSecure: parseBoolean(env.AUTH_COOKIE_SECURE, false, 'AUTH_COOKIE_SECURE'),
     authCookieSameSite: parseEnum(env.AUTH_COOKIE_SAME_SITE, ['lax', 'none'], 'lax'),
@@ -373,6 +381,8 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
   };
 
   if (env.API_BEARER_TOKEN) config.apiBearerToken = env.API_BEARER_TOKEN;
+  if (env.RUN_AUTHORITY_HOME_ID) config.runAuthorityHomeId = env.RUN_AUTHORITY_HOME_ID;
+  if (env.RUN_AUTHORITY_BEARER_TOKEN) config.runAuthorityBearerToken = env.RUN_AUTHORITY_BEARER_TOKEN;
   if (env.AUTH_STATIC_USERNAME) config.authStaticUsername = env.AUTH_STATIC_USERNAME;
   if (env.AUTH_STATIC_PASSWORD) config.authStaticPassword = env.AUTH_STATIC_PASSWORD;
   if (env.AUTH_SESSION_SECRET) config.authSessionSecret = env.AUTH_SESSION_SECRET;
@@ -482,6 +492,7 @@ export function loadConfig(env: NodeJS.ProcessEnv): AppConfig {
   validateSandboxSecretConfig(config, env);
   validateAgentSandboxOrchestratorConfig(config);
   validateLambdaMicrovmConfig(config);
+  validateRunAuthorityConfig(config);
 
   return config;
 }
@@ -492,6 +503,27 @@ function runModeStartsApi(runMode: RunMode): boolean {
 
 function runModeStartsWorker(runMode: RunMode): boolean {
   return runMode === 'combined' || runMode === 'all' || runMode === 'worker';
+}
+
+function validateRunAuthorityConfig(config: AppConfig): void {
+  if (!config.runAuthorityHomeId && !config.runAuthorityBearerToken) return;
+  if (!config.runAuthorityHomeId) {
+    throw new Error('RUN_AUTHORITY_HOME_ID is required when external run authority is configured');
+  }
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(config.runAuthorityHomeId)) {
+    throw new Error('RUN_AUTHORITY_HOME_ID must be a stable deployment identifier');
+  }
+  const token = config.runAuthorityBearerToken;
+  if (
+    !token ||
+    token.length < 32 ||
+    !/^[A-Za-z0-9._~+/-]+=*$/.test(token) ||
+    /(?:change[-_]?me|replace[-_]?me|example|placeholder)/i.test(token)
+  ) {
+    throw new Error(
+      'RUN_AUTHORITY_BEARER_TOKEN must be a header-safe, non-placeholder secret of at least 32 characters',
+    );
+  }
 }
 
 function validateInboundWebhookConfig(config: AppConfig): void {

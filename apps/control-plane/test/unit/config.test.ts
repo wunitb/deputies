@@ -132,6 +132,7 @@ describe('loadConfig', () => {
     expect(loadConfig({ API_AUTH_MODE: 'none' })).toEqual({
       port: 3583,
       maxJsonBodyBytes: 1048576,
+      runAuthorityHeartbeatMaxAgeMs: 30000,
       runCancellationPollIntervalMs: 1000,
       workerConcurrency: 4,
       workerPollIntervalMs: 1000,
