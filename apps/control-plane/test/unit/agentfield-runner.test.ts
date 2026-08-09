@@ -24,6 +24,9 @@ describe('AgentFieldRunner', () => {
           target: 'demo_echo',
         }),
       )
+      .mockResolvedValueOnce(jsonResponse({ execution_id: 'execution-1', run_id: 'run-1', status: 'pending' }))
+      .mockResolvedValueOnce(jsonResponse({ execution_id: 'execution-1', run_id: 'run-1', status: 'waiting' }))
+      .mockResolvedValueOnce(jsonResponse({ execution_id: 'execution-1', run_id: 'run-1', status: 'paused' }))
       .mockResolvedValueOnce(
         jsonResponse({ execution_id: 'execution-1', run_id: 'run-1', status: 'succeeded', result: { ok: true } }),
       ) as unknown as typeof fetch;
@@ -41,7 +44,7 @@ describe('AgentFieldRunner', () => {
     });
 
     expect(result).toEqual({ text: '{"ok":true}', artifacts: [] });
-    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(fetchImpl).toHaveBeenCalledTimes(5);
     const [submitUrl, submitInit] = vi.mocked(fetchImpl).mock.calls[0]!;
     expect(submitUrl.toString()).toBe('https://agentfield.test/api/v1/execute/async/demo_echo');
     expect(submitInit?.headers).toEqual({
@@ -60,9 +63,17 @@ describe('AgentFieldRunner', () => {
       },
       authority: { home_id: 'home-1', run_id: 'run-1', lease_owner: 'worker-1' },
     });
-    expect(vi.mocked(fetchImpl).mock.calls[1]?.[0].toString()).toBe(
+    expect(
+      vi
+        .mocked(fetchImpl)
+        .mock.calls.slice(1)
+        .map(([url]) => url.toString()),
+    ).toEqual([
       'https://agentfield.test/api/v1/executions/execution-1',
-    );
+      'https://agentfield.test/api/v1/executions/execution-1',
+      'https://agentfield.test/api/v1/executions/execution-1',
+      'https://agentfield.test/api/v1/executions/execution-1',
+    ]);
   });
 
   it('rejects an AgentField execution bound to another Deputies run', async () => {
@@ -86,6 +97,35 @@ describe('AgentFieldRunner', () => {
       }),
     ).rejects.toThrow('mismatched run authority binding');
     expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves bounded AgentField failure evidence in the Deputies terminal error', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse({ execution_id: 'execution-1', run_id: 'run-1', status: 'queued' }))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          execution_id: 'execution-1',
+          run_id: 'run-1',
+          status: 'failed',
+          error: 'permission denied',
+          error_details: { code: 'permission_denied' },
+        }),
+      ) as unknown as typeof fetch;
+    const sandbox = await new FakeSandboxProvider().create({ sessionId: 'session-1' });
+
+    await expect(
+      new AgentFieldRunner(config, fetchImpl).run({
+        sessionId: 'session-1',
+        runId: 'run-1',
+        leaseOwner: 'worker-1',
+        messageId: 'message-1',
+        prompt: 'hello',
+        context: {},
+        sandbox,
+        emit: async () => {},
+      }),
+    ).rejects.toThrow('failed: permission denied; {"code":"permission_denied"}');
   });
 
   it('fails before AgentField I/O when the current Deputies lease owner is absent', async () => {

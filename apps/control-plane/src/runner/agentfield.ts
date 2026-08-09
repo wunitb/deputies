@@ -3,13 +3,18 @@ import type { Runner, RunnerInput, RunnerResult } from './types.js';
 
 type AgentFieldSubmission = { execution_id: string; run_id: string; status: string };
 type AgentFieldExecution = AgentFieldSubmission & {
-  status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'timeout';
+  status: 'pending' | 'queued' | 'waiting' | 'running' | 'paused' | 'succeeded' | 'failed' | 'cancelled' | 'timeout';
   result?: unknown;
+  error?: string;
+  errorDetails?: unknown;
 };
 
 const executionStatuses: Record<AgentFieldExecution['status'], true> = {
+  pending: true,
   queued: true,
+  waiting: true,
   running: true,
+  paused: true,
   succeeded: true,
   failed: true,
   cancelled: true,
@@ -54,6 +59,8 @@ function parseExecution(value: unknown): AgentFieldExecution {
     run_id: response.run_id,
     status: response.status as AgentFieldExecution['status'],
     ...('result' in response ? { result: response.result } : {}),
+    ...(typeof response.error === 'string' ? { error: response.error } : {}),
+    ...('error_details' in response ? { errorDetails: response.error_details } : {}),
   };
 }
 
@@ -115,7 +122,7 @@ export class AgentFieldRunner implements Runner {
         return { text: stringifyResult(execution.result), artifacts: [] };
       }
       if (execution.status === 'failed' || execution.status === 'cancelled' || execution.status === 'timeout') {
-        throw new Error(`AgentField execution reached terminal status ${execution.status}`);
+        throw new Error(formatTerminalFailure(execution));
       }
       await delay(this.config.pollIntervalMs, undefined, { signal });
     }
@@ -140,6 +147,16 @@ export class AgentFieldRunner implements Runner {
     if (!response.ok) throw new Error(`AgentField request failed with HTTP ${response.status}`);
     return response.json();
   }
+}
+
+function formatTerminalFailure(execution: AgentFieldExecution): string {
+  const evidence = [
+    execution.error?.trim() || undefined,
+    execution.errorDetails === undefined ? undefined : stringifyResult(execution.errorDetails),
+  ]
+    .filter((value): value is string => value !== undefined)
+    .map((value) => value.replace(/\s+/gu, ' ').slice(0, 1_024));
+  return `AgentField execution reached terminal status ${execution.status}${evidence.length ? `: ${evidence.join('; ')}` : ''}`;
 }
 
 function stringifyResult(result: unknown): string {
