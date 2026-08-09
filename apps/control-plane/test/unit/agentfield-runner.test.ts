@@ -15,7 +15,15 @@ describe('AgentFieldRunner', () => {
   it('binds the Deputies run lease and returns the polled AgentField result', async () => {
     const fetchImpl = vi
       .fn()
-      .mockResolvedValueOnce(jsonResponse({ execution_id: 'execution-1', run_id: 'run-1', status: 'queued' }))
+      .mockResolvedValueOnce(
+        jsonResponse({
+          execution_id: 'execution-1',
+          run_id: 'run-1',
+          status: 'queued',
+          workflow_id: 'workflow-1',
+          target: 'demo_echo',
+        }),
+      )
       .mockResolvedValueOnce(
         jsonResponse({ execution_id: 'execution-1', run_id: 'run-1', status: 'succeeded', result: { ok: true } }),
       ) as unknown as typeof fetch;

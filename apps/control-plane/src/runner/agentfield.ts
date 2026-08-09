@@ -22,7 +22,6 @@ function parseSubmission(value: unknown): AgentFieldSubmission {
   }
   const response = value as Record<string, unknown>;
   if (
-    Object.keys(response).length !== 3 ||
     typeof response.execution_id !== 'string' ||
     response.execution_id.length === 0 ||
     typeof response.run_id !== 'string' ||
