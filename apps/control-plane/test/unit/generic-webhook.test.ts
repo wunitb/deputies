@@ -69,7 +69,11 @@ describe('GenericWebhookService', () => {
     });
 
     expect(first.duplicate).toBe(false);
-    expect(duplicate).toMatchObject({ accepted: true, duplicate: true });
+    expect(duplicate).toMatchObject({
+      accepted: true,
+      duplicate: true,
+      session: { id: first.session?.id },
+    });
     await expect(services.messages.list(first.session!.id)).resolves.toHaveLength(1);
   });
 

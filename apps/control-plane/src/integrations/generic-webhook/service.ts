@@ -63,7 +63,13 @@ export class GenericWebhookService {
     });
 
     if (!received) {
-      return { accepted: true, duplicate: true };
+      const thread = await this.store.getExternalThread(source.key, parsed.thread.externalId);
+      const session = thread ? await this.sessions.get(thread.sessionId) : null;
+      return {
+        accepted: true,
+        duplicate: true,
+        ...(session ? { session } : {}),
+      };
     }
 
     const { session, message } = await enqueueIntegrationIngress(
