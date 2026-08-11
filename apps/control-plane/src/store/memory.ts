@@ -3147,6 +3147,11 @@ export class MemoryStore implements AppStore {
     return record;
   }
 
+  async getIntegrationDelivery(source: string, dedupeKey: string): Promise<IntegrationDeliveryRecord | null> {
+    const record = this.integrationDeliveries.get(deliveryKey(source, dedupeKey));
+    return record ? structuredClone(record) : null;
+  }
+
   async createIntegrationDelivery(input: {
     id: string;
     source: string;

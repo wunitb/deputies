@@ -120,7 +120,11 @@ export class AgentFieldRunner implements Runner {
         submissionResponse = await this.requestJson(submissionPath, submissionRequest, signal);
         break;
       } catch (error) {
-        if (signal.aborted || error instanceof AgentFieldResponseError || attempt === submissionReconciliationAttempts) {
+        if (
+          signal.aborted ||
+          error instanceof AgentFieldResponseError ||
+          attempt === submissionReconciliationAttempts
+        ) {
           throw error;
         }
       }
@@ -191,7 +195,11 @@ function canonicalizeDiagnostic(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonicalizeDiagnostic);
   if (value === null || typeof value !== 'object') return value;
   const record = value as Record<string, unknown>;
-  return Object.fromEntries(Object.keys(record).sort().map((key) => [key, canonicalizeDiagnostic(record[key])]));
+  return Object.fromEntries(
+    Object.keys(record)
+      .sort()
+      .map((key) => [key, canonicalizeDiagnostic(record[key])]),
+  );
 }
 
 function stringifyResult(result: unknown): string {

@@ -47,7 +47,7 @@ describe.skipIf(!testDatabaseUrl)('Postgres webhook persistence', () => {
       expect(firstBody.message?.prompt).toBe('bar baz\n\ndo work');
 
       const duplicate = await postJsonWithAuth(`${baseUrl}/webhooks/generic/foo`, 'secret', {
-        thread: { externalId: 'thread-1' },
+        thread: { externalId: 'attacker-selected-thread' },
         dedupeKey: 'delivery-1',
         prompt: 'do work again',
       });

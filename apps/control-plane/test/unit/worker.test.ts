@@ -1722,8 +1722,7 @@ describe('WorkerService', () => {
     const run = await store.getLatestRunForSession(session.id);
     expect(run).toMatchObject({
       status: 'failed',
-      error:
-        'Deputies lifecycle authority became unprovable during cancellation polling: lease store unavailable',
+      error: 'Deputies lifecycle authority became unprovable during cancellation polling: lease store unavailable',
     });
     expect(run!.failedAt!.getTime() - run!.startedAt.getTime()).toBeLessThan(leaseDurationMs);
     await expect(services.messages.list(session.id)).resolves.toMatchObject([{ status: 'failed' }]);

@@ -4864,6 +4864,17 @@ export class PostgresStore implements AppStore {
     });
   }
 
+  async getIntegrationDelivery(source: string, dedupeKey: string): Promise<IntegrationDeliveryRecord | null> {
+    const result = await this.pool.query<IntegrationDeliveryRow>(
+      `SELECT id, source, dedupe_key, status, received_at, processed_at, error, metadata
+       FROM integration_deliveries
+       WHERE source = $1 AND dedupe_key = $2`,
+      [source, dedupeKey],
+    );
+    const row = result.rows[0];
+    return row ? toIntegrationDelivery(row) : null;
+  }
+
   async createIntegrationDelivery(input: {
     id: string;
     source: string;
