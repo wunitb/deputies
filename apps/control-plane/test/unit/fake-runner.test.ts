@@ -31,6 +31,28 @@ describe('FakeRunner', () => {
     expect(events[1]?.payload).toEqual({ skills: [], shadowed: [], diagnostics: [] });
   });
 
+  it('keeps a bounded fake run cancellable while external dispatch observes its authority', async () => {
+    const sandbox = await new FakeSandboxProvider().create({ sessionId: 'session-1' });
+    const controller = new AbortController();
+    const events: NormalizedEvent[] = [];
+    const execution = new FakeRunner().run({
+      sessionId: 'session-1',
+      runId: 'run-1',
+      messageId: 'message-1',
+      prompt: 'hello',
+      context: { fakeHoldMs: 1_000 },
+      sandbox,
+      signal: controller.signal,
+      emit: async (event) => {
+        events.push(event);
+        if (event.type === 'skills_loaded') controller.abort();
+      },
+    });
+
+    await expect(execution).rejects.toMatchObject({ name: 'AbortError' });
+    expect(events.map((event) => event.type)).toEqual(['run_started', 'skills_loaded']);
+  });
+
   it('can return scripted fake artifacts from context', async () => {
     const sandbox = await new FakeSandboxProvider().create({ sessionId: 'session-1' });
 

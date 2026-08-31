@@ -1487,6 +1487,7 @@ export interface IntegrationStore {
     metadata: Record<string, unknown>;
     now: Date;
   }): Promise<ExternalThreadRecord>;
+  getIntegrationDelivery(source: string, dedupeKey: string): Promise<IntegrationDeliveryRecord | null>;
   /** Returns null when the delivery is processed or currently being handled by another attempt. */
   createIntegrationDelivery(input: {
     id: string;

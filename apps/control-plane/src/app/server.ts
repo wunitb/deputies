@@ -65,6 +65,7 @@ import { registerRepositoryRoutes } from './repository-routes.js';
 import { registerSetupRoutes } from './setup-routes.js';
 import { registerSkillRoutes } from './skill-routes.js';
 import { registerAgentProfileRoutes } from './agent-profile-routes.js';
+import { registerRunAuthorityRoutes } from './run-authority-routes.js';
 import { AgentProfileError, AgentProfileService } from '../agent-profiles/service.js';
 import { routeTelemetryMiddleware } from './telemetry-middleware.js';
 import { registerTelemetryRoutes } from './telemetry-routes.js';
@@ -505,6 +506,7 @@ export function createApp(config: AppConfig, services = createServices()) {
   registerEnvironmentRoutes(app, config, services);
   registerSkillRoutes(app, config, services);
   registerAgentProfileRoutes(app, config, services);
+  registerRunAuthorityRoutes(app, config, services);
   registerSnippetRoutes(app, config, services);
   registerNotepadRoutes(app, config, services);
   registerTelemetryRoutes(app, config);

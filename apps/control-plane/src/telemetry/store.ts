@@ -65,6 +65,7 @@ const storeMethods = [
   'getEnvironmentRevision',
   'getExternalResources',
   'getExternalThread',
+  'getIntegrationDelivery',
   'getLatestEventByType',
   'getLatestRunForSession',
   'getLatestSandbox',

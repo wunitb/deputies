@@ -63,7 +63,21 @@ export class GenericWebhookService {
     });
 
     if (!received) {
-      return { accepted: true, duplicate: true };
+      const delivery = await this.store.getIntegrationDelivery(source.key, parsed.dedupeKey);
+      const storedThread = delivery && isRecord(delivery.metadata.thread) ? delivery.metadata.thread : undefined;
+      const externalId = storedThread ? optionalString(storedThread.externalId) : undefined;
+      if (delivery?.status !== 'processed') {
+        return { accepted: true, duplicate: true };
+      }
+      if (!externalId) {
+        throw new Error('Processed integration delivery lacks its original thread identity');
+      }
+      const thread = await this.store.getExternalThread(source.key, externalId);
+      const session = thread ? await this.sessions.get(thread.sessionId) : null;
+      if (!session) {
+        throw new Error('Duplicate integration delivery lacks a durable session binding');
+      }
+      return { accepted: true, duplicate: true, session };
     }
 
     const { session, message } = await enqueueIntegrationIngress(

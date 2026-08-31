@@ -1,3 +1,4 @@
+import { setTimeout as delay } from 'node:timers/promises';
 import type { Runner, RunnerInput, RunnerResult } from './types.js';
 
 export class FakeRunner implements Runner {
@@ -23,6 +24,9 @@ export class FakeRunner implements Runner {
       payload: { skills: [], shadowed: [], diagnostics: [] },
       createdAt: new Date(),
     });
+
+    const holdMs = fakeHoldMs(input.context);
+    if (holdMs > 0) await delay(holdMs, undefined, { signal: input.signal });
 
     await input.emit({
       sessionId: input.sessionId,
@@ -69,6 +73,11 @@ export class FakeRunner implements Runner {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function fakeHoldMs(context: Record<string, unknown>): number {
+  const value = context.fakeHoldMs;
+  return typeof value === 'number' && Number.isInteger(value) && value > 0 && value <= 30_000 ? value : 0;
 }
 
 function getNestedFakeArtifact(context: Record<string, unknown>): unknown {

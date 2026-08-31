@@ -1408,6 +1408,36 @@ describe('WorkerService', () => {
     await expect(services.messages.list(session.id)).resolves.toMatchObject([{ status: 'failed' }]);
   });
 
+  it('persists bounded AgentField terminal diagnostics on the Deputies failed run', async () => {
+    const store = new MemoryStore();
+    const services = createServices(store);
+    const session = await services.sessions.create({ title: 'AgentField failure evidence' });
+    await services.messages.enqueue({ sessionId: session.id, prompt: 'fail in capability execution' });
+    const diagnostics = [
+      'AgentField execution reached terminal status failed:',
+      `status_reason=present:sha256:${'a'.repeat(43)};`,
+      `error=present:sha256:${'b'.repeat(43)};`,
+      `error_details=present:sha256:${'c'.repeat(43)}`,
+    ].join(' ');
+    const worker = new WorkerService({
+      store,
+      events: services.events,
+      artifacts: services.artifacts,
+      runner: new FailingRunner(diagnostics),
+      runnerType: 'agentfield',
+      sandboxProvider: new FakeSandboxProvider(),
+      leaseOwner: 'test-worker',
+    });
+
+    await expect(worker.processNext()).resolves.toBe(true);
+
+    await expect(store.getLatestRunForSession(session.id)).resolves.toMatchObject({
+      status: 'failed',
+      error: diagnostics,
+    });
+    expect(diagnostics.length).toBeLessThan(300);
+  });
+
   it('does not complete a run that was cancelled while the runner was active', async () => {
     const store = new MemoryStore();
     const services = createServices(store);
@@ -1654,6 +1684,48 @@ describe('WorkerService', () => {
     await expect(processing).resolves.toBe(true);
     await expect(services.messages.list(session.id)).resolves.toMatchObject([{ status: 'pending' }]);
     await expect(services.sessions.get(session.id)).resolves.toMatchObject({ status: 'queued' });
+  });
+
+  it('aborts before the last proven lease expires when the lease store becomes unavailable', async () => {
+    const store = new MemoryStore();
+    const services = createServices(store);
+    const session = await services.sessions.create({ title: 'Lease store outage' });
+    await services.messages.enqueue({ sessionId: session.id, prompt: 'long running' });
+    const runner = new BlockingRunner();
+    const getRun = store.getRun.bind(store);
+    let getRunCalls = 0;
+    store.getRun = async (runId) => {
+      getRunCalls += 1;
+      if (getRunCalls === 1) throw new Error('lease store unavailable');
+      return getRun(runId);
+    };
+
+    const leaseDurationMs = 200;
+    const worker = new WorkerService({
+      store,
+      events: services.events,
+      artifacts: services.artifacts,
+      runner,
+      runnerType: 'blocking',
+      sandboxProvider: new FakeSandboxProvider(),
+      leaseOwner: 'test-worker',
+      leaseDurationMs,
+      heartbeatIntervalMs: 60_000,
+      cancellationPollIntervalMs: 60_000,
+    });
+
+    const processing = worker.processNext();
+    await runner.waitForStart();
+    await runner.waitForAbort();
+    await expect(processing).resolves.toBe(true);
+
+    const run = await store.getLatestRunForSession(session.id);
+    expect(run).toMatchObject({
+      status: 'failed',
+      error: 'Deputies lifecycle authority became unprovable during cancellation polling: lease store unavailable',
+    });
+    expect(run!.failedAt!.getTime() - run!.startedAt.getTime()).toBeLessThan(leaseDurationMs);
+    await expect(services.messages.list(session.id)).resolves.toMatchObject([{ status: 'failed' }]);
   });
 
   it('allows another worker to process a different session while one session is active', async () => {
